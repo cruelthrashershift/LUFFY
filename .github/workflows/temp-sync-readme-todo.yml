@@ -1,0 +1,113 @@
+name: temp-sync-readme-todo
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-readme-todo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Sync README TODO section
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+
+          readme = pathlib.Path("README.md")
+          content = readme.read_text(encoding="utf-8")
+
+          final_entries = [
+              ("luffy/deepscaler/utils.py", 45, "Add logging for API calls and errors"),
+              ("luffy/deepscaler/utils.py", 46, "Support batch processing for multiple prompts"),
+              ("luffy/deepscaler/utils.py", 47, "Add timeout configuration for API calls"),
+              ("luffy/deepscaler/utils.py", 107, "Implement Vertex AI initialization and authentication"),
+              ("luffy/deepscaler/utils.py", 108, "Configure safety settings for content generation"),
+              ("luffy/deepscaler/utils.py", 109, "Set up GenerativeModel with proper system instructions"),
+              ("luffy/deepscaler/utils.py", 110, "Implement retry logic with exponential backoff"),
+              ("luffy/deepscaler/utils.py", 111, "Add comprehensive error handling for API access issues"),
+              ("luffy/deepscaler/utils.py", 112, "Handle rate limiting and quota management"),
+              ("luffy/deepscaler/utils.py", 113, "Implement response validation and text extraction"),
+              ("luffy/deepscaler/utils.py", 114, "Add support for different generation configurations"),
+              ("luffy/verl/verl/protocol.py", 114, "Optimize memory usage during tensor reshaping"),
+              ("luffy/verl/verl/protocol.py", 115, "Add support for different tensor types and shapes"),
+              ("luffy/verl/verl/protocol.py", 135, "Optimize tensor view operations for performance"),
+              ("luffy/verl/verl/protocol.py", 136, "Add error handling for invalid batch dimensions"),
+              ("luffy/verl/verl/protocol.py", 169, "(zhangchi.usc1992) add consistency check"),
+              ("luffy/verl/verl/protocol.py", 265, "we can actually lift this restriction if needed"),
+              ("luffy/verl/verl/protocol.py", 351, "(zhangchi.usc1992) whether to copy"),
+          ]
+
+          changed_paths = {
+              "luffy/deepscaler/utils.py": 16,
+              "luffy/verl/verl/protocol.py": 13,
+          }
+
+          bullet_re = re.compile(r"^- \[ \] \*\*(?P<path>.+?):(?P<line>\d+)\*\* - (?P<text>.*)$")
+          section_re = re.compile(r"(### 📝 Complete TODO List\n)(?P<section>.*?)(?=## 🤝 Contributing)", re.S)
+          match = section_re.search(content)
+          if not match:
+              raise SystemExit("Complete TODO List section not found")
+
+          entries = []
+          for line in match.group("section").splitlines():
+              item = bullet_re.match(line)
+              if item:
+                  entry = item.groupdict()
+                  entry["line"] = int(entry["line"])
+                  entries.append(entry)
+
+          counts = {path: sum(e["path"] == path for e in entries) for path in changed_paths}
+          if counts != changed_paths:
+              raise SystemExit(f"Unexpected baseline counts: {counts}")
+
+          kept_entries = [e for e in entries if e["path"] not in changed_paths]
+          kept_entries.extend({"path": path, "line": line, "text": text} for path, line, text in final_entries)
+          kept_entries.sort(key=lambda e: (e["path"], e["line"]))
+
+          groups = []
+          current = []
+          current_path = None
+          for entry in kept_entries:
+              if current_path is not None and entry["path"] != current_path:
+                  groups.append(current)
+                  current = []
+              current.append(entry)
+              current_path = entry["path"]
+          if current:
+              groups.append(current)
+
+          rendered_groups = []
+          for group in groups:
+              rendered_groups.append("\n".join(
+                  f"- [ ] **{e['path']}:{e['line']}** - {e['text']}" for e in group
+              ))
+          rendered = "\n\n".join(rendered_groups)
+          replacement = match.group(1) + "\n" + rendered + "\n\n"
+          updated = content[:match.start("section")] + replacement + content[match.end("section"):]
+
+          readme.write_text(updated, encoding="utf-8")
+          print(f"baseline_entries={len(entries)} final_entries={len(kept_entries)} final_changed_entries={len(final_entries)}")
+      - name: Commit README update and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git rm .github/workflows/temp-sync-readme-todo.yml
+          if git diff --cached --quiet; then
+            echo "No README changes were generated"
+          else
+            git commit -m "docs: sync README TODO list from dev code"
+            git push origin HEAD:dev
+          fi
